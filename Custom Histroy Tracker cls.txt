@@ -1,0 +1,157 @@
+/*****************************************************************************
+@description   : Custom History Tracker
+Holds logic for tracking history of fields of an object which is added in the fieldset.
+
+Field set API should be -> Fields_To_Be_Tracked
+
+******************************************************************************/
+
+
+public with sharing class CustomHistoryTracker {  
+
+    /** Global variables  **/
+
+    public static Set<String> recurssionHandlerSobjectSet = new Set<String>();
+    
+    /************************************************* 
+      Description : Method called in after update | newSobjectRecords -> sobject new values |  oldSobjectRecords -> old values | parentFieldApi is lookup field API in History Tracking object.
+    ******************************************************/
+    public static void trackFieldsHistory(List<sObject> newSobjectRecords, Map<Id,sObject> oldSobjectRecords, String parentFieldApi) {
+        
+        if(newSobjectRecords == null || newSobjectRecords.isEmpty() || oldSobjectRecords ==  null || oldSobjectRecords.isEmpty() || parentFieldApi == null) return;
+        
+        String sobjectName = String.valueOf(newSobjectRecords[0].Id.getsobjecttype());
+        String fieldSetName = 'Fields_To_Be_Tracked';
+
+        Map<String, Schema.SObjectType> GlobalDescribeMap = Schema.getGlobalDescribe(); 
+    	Schema.SObjectType SObjectTypeObj = GlobalDescribeMap.get(sobjectName);
+    	Schema.DescribeSObjectResult DescribeSObjectResultObj = SObjectTypeObj.getDescribe();
+        List<Schema.FieldSetMember> fieldsOfFieldset = DescribeSObjectResultObj.fieldSets.getMap().get(fieldSetName).getFields();
+        
+        if(fieldsOfFieldset == Null || fieldsOfFieldset.isEmpty()) return;
+
+        Map<String,List<String>> fieldAPILabelMap = new Map<String,List<String>>();
+        List<History_Tracking__c> historyTrackingRecordsInsert = new List<History_Tracking__c>();
+
+        
+        for (Schema.FieldSetMember f : fieldsOfFieldset) {
+            Schema.DescribeFieldResult describeResult = f.getSObjectField().getDescribe();
+            //choose which fields to track depending on the field type
+            if (describeResult.getType() == Schema.DisplayType.Boolean ||
+                describeResult.getType() == Schema.DisplayType.Combobox ||
+                describeResult.getType() == Schema.DisplayType.Currency ||
+                describeResult.getType() == Schema.DisplayType.Date ||
+                describeResult.getType() == Schema.DisplayType.DateTime ||
+                describeResult.getType() == Schema.DisplayType.Double ||
+                describeResult.getType() == Schema.DisplayType.Email ||
+                describeResult.getType() == Schema.DisplayType.Integer ||
+                describeResult.getType() == Schema.DisplayType.MultiPicklist ||
+                describeResult.getType() == Schema.DisplayType.Percent ||
+                describeResult.getType() == Schema.DisplayType.Phone ||
+                describeResult.getType() == Schema.DisplayType.Picklist ||
+                describeResult.getType() == Schema.DisplayType.String ||
+                describeResult.getType() == Schema.DisplayType.TextArea ||
+                describeResult.getType() == Schema.DisplayType.Time ||
+                describeResult.getType() == Schema.DisplayType.URL) 
+            {
+                //don't add standard fields that are not necessary
+                if (describeResult.getName() != 'CreatedDate' &&
+                    describeResult.getName() != 'LastModifiedDate' &&
+                    describeResult.getName() != 'SystemModstamp' &&
+                    //do not add formula fields
+                    !describeResult.isCalculated()
+                    )
+                {
+                    List<String> localStr = new List<String>();
+                    localStr.add(String.valueOf(describeResult.getLabel()));
+                    localStr.add(String.valueOf(describeResult.getType()));
+                    fieldAPILabelMap.put(describeResult.getName(),localStr);
+                    System.debug('fieldAPILabelMap >'+fieldAPILabelMap);
+                }
+            }
+        }
+
+
+        if(fieldAPILabelMap.isEmpty()) return;
+
+        for(sObject newRecord: newSobjectRecords){
+            sObject oldRecord = oldSobjectRecords.get(newRecord.Id);
+            for (String fieldAPI : fieldAPILabelMap.keySet()) {
+                System.debug('Field name: '+fieldAPI +'. New value: ' + newRecord.get(fieldAPI) +'. Old value: '+oldRecord.get(fieldAPI)); 
+                if(newRecord.get(fieldAPI) != oldRecord.get(fieldAPI)){ 
+                    History_Tracking__c HT = new History_Tracking__c();
+                    HT.put(parentFieldApi,newRecord.Id);
+                    HT.Field_Name__c = fieldAPILabelMap.get(fieldAPI)[0];
+                    // HT.New_Value__c = String.valueOf(newRecord.get(fieldAPI));
+                    //HT.Old_Value__c = String.valueOf(oldRecord.get(fieldAPI));
+                    
+                    system.debug('### RV field instance:'+oldRecord.get(fieldAPI) instanceof);
+                    if (newRecord.get(fieldAPI) instanceof Datetime){
+                        // your field is a Datetime data type
+                        DateTime dt = Datetime.valueOf(newRecord.get(fieldAPI));
+                        HT.New_Value__c = dt.format('MM/dd/yyyy hh:mm a');
+                    }
+                    // else if(newRecord.get(fieldAPI) instanceof Datetime){
+                    //     DateTime d = Datetime.valueOf(String.valueOf(newRecord.get(fieldAPI)));
+                    //     HT.New_Value__c = d.format('MM/dd/yyyy');
+                    // } 
+                    else{
+                        // your field is not a Datetime data type
+                        HT.New_Value__c = String.valueOf(newRecord.get(fieldAPI));
+                    }
+
+                    if (oldRecord.get(fieldAPI) instanceof Datetime){
+                        // your field is a Datetime data type
+                        DateTime Olddt = Datetime.valueOf(oldRecord.get(fieldAPI));
+                        HT.Old_Value__c = Olddt.format('MM/dd/yyyy hh:mm a');
+                    }
+                    // else if(oldRecord.get(fieldAPI) instanceof Datetime){
+                    //     DateTime Oldd = Datetime.valueOf(String.valueOf(oldRecord.get(fieldAPI)));
+                    //     HT.Old_Value__c = Oldd.format('MM/dd/yyyy');
+                    // } 
+                    else{
+                        // your field is not a Datetime data type
+                        HT.Old_Value__c = String.valueOf(oldRecord.get(fieldAPI));
+                    }
+
+                   /* if(fieldAPILabelMap.get(fieldAPI)[1] == 'DATETIME'){
+                        System.debug('DateTime>> '+newRecord.get(fieldAPI));
+                        System.debug('DateTimeOld>> '+oldRecord.get(fieldAPI));
+
+                        // DateTime dt = Datetime.valueOf(String.valueOf(newRecord.get(fieldAPI)));
+                        DateTime dt = Datetime.valueOf(newRecord.get(fieldAPI));
+                        HT.New_Value__c = dt.format('MM/dd/yyyy hh:mm a');
+                       
+                        // DateTime Olddt = Datetime.valueOf(String.valueOf(oldRecord.get(fieldAPI)));
+                        DateTime Olddt = Datetime.valueOf(oldRecord.get(fieldAPI));
+                        HT.Old_Value__c = Olddt.format('MM/dd/yyyy hh:mm a');
+                    }
+                    else if(fieldAPILabelMap.get(fieldAPI)[1] == 'DATE'){
+                        System.debug('Date>> '+newRecord.get(fieldAPI));
+                        System.debug('DateOld>> '+oldRecord.get(fieldAPI));
+
+                        DateTime d = Datetime.valueOf(String.valueOf(newRecord.get(fieldAPI)));
+                        HT.New_Value__c = d.format('MM/dd/yyyy');
+                       
+                        DateTime Oldd = Datetime.valueOf(String.valueOf(oldRecord.get(fieldAPI)));
+                        HT.Old_Value__c = Oldd.format('MM/dd/yyyy');
+                    }
+                    else{
+                        HT.New_Value__c = String.valueOf(newRecord.get(fieldAPI));
+                        HT.Old_Value__c = String.valueOf(oldRecord.get(fieldAPI));
+                    } 
+                    
+                    */
+
+                    historyTrackingRecordsInsert.add(HT);
+                }
+            }
+        }
+        system.debug('### historyTrackingRecordsInsert:'+historyTrackingRecordsInsert.size()); 
+        system.debug('### historyTrackingRecordsInsert:'+ JSON.serializePretty(historyTrackingRecordsInsert));
+        if(!historyTrackingRecordsInsert.isEmpty()){
+            CustomHistoryTracker.recurssionHandlerSobjectSet.add(String.valueOf(DescribeSObjectResultObj));
+            insert historyTrackingRecordsInsert;    
+        }
+	}
+}
